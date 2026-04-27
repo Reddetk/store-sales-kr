@@ -1,0 +1,12 @@
+,Значение
+train_rows,3000888
+train_date_min,2013-01-01
+train_date_max,2017-08-15
+n_stores,54
+n_families,33
+zero_sales_pct,31.3
+oil_missing_days_raw,43
+corr_oil_sales,-0.752
+corr_tx_sales,0.589
+n_holidays_total,350
+n_holidays_transferred,12
