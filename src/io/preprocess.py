@@ -13,6 +13,11 @@ from pathlib import Path
 from src.config import DATA_RAW, DATA_INT, DATE_COL, STORE_COL, FAMILY_COL
 
 
+# Файлы, содержащие столбец DATE_COL («date»).
+# stores.csv не содержит столбца date — parse_dates для него не передаётся.
+_FILES_WITH_DATE = {"train", "test", "oil", "holidays", "transactions"}
+
+
 def load_raw_files() -> dict[str, pd.DataFrame]:
     """
     Загружает все исходные CSV-файлы из data/raw/.
@@ -43,7 +48,9 @@ def load_raw_files() -> dict[str, pd.DataFrame]:
                 f"  kaggle competitions download "
                 f"-c store-sales-time-series-forecasting -p data/raw/"
             )
-        data[key] = pd.read_csv(path, parse_dates=[DATE_COL])
+        # parse_dates передаётся только файлам со столбцом DATE_COL
+        kwargs = {"parse_dates": [DATE_COL]} if key in _FILES_WITH_DATE else {}
+        data[key] = pd.read_csv(path, **kwargs)
     return data
 
 
