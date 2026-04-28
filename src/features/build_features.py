@@ -319,9 +319,10 @@ def add_holiday_feature(
         - type='Transfer'   → дата, НА которую перенесён праздник (учитывается).
         - type in {Bridge, Work Day, Event} → не учитываются в базовых признаках.
 
-    Контроль качества:
-        Ассерт проверяет отсутствие пересечений между is_national и is_regional:
-        один праздник не может одновременно относиться к двум уровням локали.
+    Примечание о пересечении is_national и is_regional:
+        На недельном уровне агрегации пересечение is_national=1 и is_regional=1
+        в одной строке допустимо: национальный и региональный праздники могут
+        попадать в разные дни одной и той же недели. Это не ошибка данных.
 
     Параметры
     ----------
@@ -359,10 +360,15 @@ def add_holiday_feature(
     df["is_national"] = dates_norm.isin(national_weeks).astype("int8")
     df["is_regional"] = dates_norm.isin(regional_weeks).astype("int8")
 
-    # Контроль: национальный и региональный праздник не могут совпадать в одну неделю
-    assert not (df["is_national"].astype(bool) & df["is_regional"].astype(bool)).any(), (
-        "Обнаружено пересечение is_national и is_regional — проверьте holidays_events.csv"
-    )
+    # FIX-3: пересечение is_national и is_regional допустимо на недельном уровне
+    # (национальный и региональный праздники в разные дни одной недели).
+    # Выводим число таких недель как информационное сообщение, не как ошибку.
+    n_overlap = int((df["is_national"].astype(bool) & df["is_regional"].astype(bool)).sum())
+    if n_overlap > 0:
+        print(
+            f"[INFO] add_holiday_feature: {n_overlap} строк с is_national=1 и is_regional=1 "
+            "(нац. и рег. праздники в одну неделю — допустимо на W-MON агрегации)"
+        )
 
     return df
 
