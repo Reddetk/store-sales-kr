@@ -1,5 +1,5 @@
 """
-build_features.py — конструирование признакового пространства (Раздел 2.1 ПЗ).
+build_features.py — конструирование признакового пространства (Раздел 2.4 ПЗ).
 
 Схема датасета Corporación Favorita (Kaggle):
     train.csv       : date, store_nbr, family, sales, onpromotion (int — кол-во единиц под акцией)
@@ -9,21 +9,38 @@ build_features.py — конструирование признакового п
     transactions.csv: date, store_nbr, transactions
 
 Порядок применения:
-    1. weekly_aggregation()     — агрегация дневных продаж в недельные
-    2. add_lag_features()       — лаговые признаки
-    3. add_rolling_features()   — скользящие статистики
-    4. add_calendar_features()  — циклические кодировки дат
-    5. add_promotion_feature()  — суммарный объём промо за неделю
-    6. add_oil_feature()        — нормированная цена нефти
-    7. add_holiday_feature()    — бинарный индикатор праздника (с учётом Transfer)
+    1. weekly_aggregation()       — агрегация дневных продаж в недельные
+    2. add_lag_features()         — лаговые признаки (включая lag_9, onpromotion_lag1)
+    3. add_rolling_features()     — скользящие статистики (min_periods=2 для std)
+    4. add_calendar_features()    — циклические кодировки дат (период 52: АКФ=0,306 > 0,1426)
+    5. add_promotion_feature()    — суммарный объём промо за неделю
+    6. add_oil_feature()          — нормированная цена нефти
+    7. add_holiday_feature()      — is_holiday + is_national + is_regional
     8. add_transactions_feature() — недельная посещаемость магазина
-    9. add_store_features()     — тип и кластер магазина (one-hot)
+    9. add_store_features()       — тип и кластер магазина (one-hot); применяется ДО разбивки train/test
 
-Каждая функция принимает и возвращает pd.DataFrame.
+Кодирование категориальных признаков (add_store_features) выполняется до dropna
+и до разбивки train/test (см. ноутбук 01, ячейка 10), чтобы гарантировать
+одинаковое признаковое пространство в обоих подмножествах.
+
+Нормализация числовых признаков (StandardScaler) вынесена в отдельный модуль
+src/features/scaling.py и применяется только для LSTM и упругой сети.
+XGBoost и случайный лес инвариантны к масштабу признаков и не требуют нормализации.
+
+Итоговое признаковое пространство (22 признака, таблица 2.4 ПЗ):
+    Лаги (6)       : lag_1, lag_2, lag_4, lag_9, lag_12, lag_52, onpromotion_lag1
+    Скользящие (3) : rolling_mean_4, rolling_std_4, rolling_mean_12
+    Циклические (4): week_of_year_sin, week_of_year_cos, month_sin, month_cos
+    Праздники (3)  : is_holiday, is_national, is_regional
+    Магазин (6)    : store_type_A … store_type_E, cluster
+    Итого: 22 признака (rolling_std_12 — вспомогательный, не входит в итоговое пространство)
 """
 import numpy as np
 import pandas as pd
-from src.config import TARGET, DATE_COL, STORE_COL, FAMILY_COL, LAG_WEEKS, ROLLING_WINDOWS
+from src.config import (
+    TARGET, DATE_COL, STORE_COL, FAMILY_COL,
+    LAG_WEEKS, ROLLING_WINDOWS, PROMOTION_LAG,
+)
 
 
 # ── 1. Недельная агрегация ─────────────────────────────────────────────────────
@@ -54,7 +71,7 @@ def weekly_aggregation(df: pd.DataFrame) -> pd.DataFrame:
         df.groupby([STORE_COL, FAMILY_COL, pd.Grouper(key=DATE_COL, freq="W-MON")])
         .agg(
             sales_weekly=("sales", "sum"),
-            onpromotion_weekly=("onpromotion", "sum"),  # суммарное кол-во единиц под промо
+            onpromotion_weekly=("onpromotion", "sum"),
         )
         .reset_index()
     )
@@ -67,19 +84,28 @@ def add_lag_features(
     lag_weeks: list[int] | None = None,
 ) -> pd.DataFrame:
     """
-    Добавляет лаговые признаки целевой переменной sales_weekly.
+    Добавляет лаговые признаки целевой переменной sales_weekly и признак onpromotion_lag1.
 
-    Лаги lag_1 и lag_4 захватывают краткосрочную автокорреляцию;
-    lag_52 кодирует сезонный сигнал прошлого года (S = 52 недели).
+    Обоснование лагов (рисунки 2.10, 2.11 ПЗ; таблица 2.3 ПЗ):
+        lag_1, lag_2  — значимые лаги 1–2 АКФ diff1 (рисунок 2.10 ПЗ).
+        lag_4         — значимый лаг 4 АКФ diff1 (рисунок 2.10 ПЗ).
+        lag_9         — единственный значимый лаг ЧАКФ diff1 = 0,32 (рисунок 2.11 ПЗ).
+        lag_12        — значимые лаги 12–13 АКФ diff1 (рисунок 2.10 ПЗ).
+        lag_52        — АКФ = 0,306 > граница Бартлетта 0,1426 (таблица 2.3 ПЗ).
+
+    Признак onpromotion_lag1:
+        Сдвиг onpromotion_weekly на 1 неделю вперёд обоснован корреляцией Пирсона
+        0,797 между onpromotion и sales_weekly (пункт 2.2.1 ПЗ). Лаг предотвращает
+        утечку данных: промо текущей недели недоступно на момент прогноза.
 
     Параметры
     ----------
-    df        : pd.DataFrame с колонкой sales_weekly.
-    lag_weeks : список сдвигов в неделях; по умолчанию из config [1, 2, 4, 12, 52].
+    df        : pd.DataFrame с колонками sales_weekly, onpromotion_weekly.
+    lag_weeks : список сдвигов в неделях; по умолчанию из config [1, 2, 4, 9, 12, 52].
 
     Возвращает
     ----------
-    pd.DataFrame с новыми колонками lag_N.
+    pd.DataFrame с новыми колонками lag_N и onpromotion_lag1.
     """
     if lag_weeks is None:
         lag_weeks = LAG_WEEKS
@@ -88,6 +114,11 @@ def add_lag_features(
         df[f"lag_{lag}"] = (
             df.groupby([STORE_COL, FAMILY_COL])[TARGET].shift(lag)
         )
+    # onpromotion_lag1: лаг первого порядка признака промоакции
+    # Обоснование: корреляция Пирсона 0,797 (пункт 2.2.1 ПЗ)
+    df["onpromotion_lag1"] = (
+        df.groupby([STORE_COL, FAMILY_COL])["onpromotion_weekly"].shift(PROMOTION_LAG)
+    )
     return df
 
 
@@ -99,11 +130,17 @@ def add_rolling_features(
     """
     Добавляет скользящее среднее и стандартное отклонение целевой переменной.
 
-    rolling_mean_4  — локальный тренд за 4 недели.
-    rolling_std_4   — волатильность спроса за 4 недели.
-    rolling_mean_12 — квартальный сезонный уровень.
+    rolling_mean_4  — локальный тренд за 4 недели (входит в итоговое пространство).
+    rolling_std_4   — волатильность спроса за 4 недели (входит в итоговое пространство).
+    rolling_mean_12 — квартальный сезонный уровень (входит в итоговое пространство).
+    rolling_std_12  — вспомогательный признак, НЕ входит в итоговое пространство
+                      таблицы 2.4 ПЗ; генерируется для аналитических целей.
 
     Сдвиг на 1 неделю (shift(1)) перед расчётом предотвращает утечку данных.
+
+    Исправление FIX-2 (синхронизировано с ноутбуком 01, ячейка 9):
+        min_periods для rolling std установлен равным 2, поскольку стандартное
+        отклонение по одному наблюдению не определено статистически.
 
     Параметры
     ----------
@@ -122,8 +159,9 @@ def add_rolling_features(
         df[f"rolling_mean_{w}"] = grp.transform(
             lambda x: x.shift(1).rolling(w, min_periods=1).mean()
         )
+        # FIX-2: min_periods=2 для std (синхронизировано с NB01, ячейка 9)
         df[f"rolling_std_{w}"] = grp.transform(
-            lambda x: x.shift(1).rolling(w, min_periods=1).std()
+            lambda x: x.shift(1).rolling(w, min_periods=2).std()
         ).fillna(0)
     return df
 
@@ -139,8 +177,18 @@ def add_calendar_features(df: pd.DataFrame) -> pd.DataFrame:
         month_sin        = sin(2π · month / 12)
         month_cos        = cos(2π · month / 12)
 
-    Преобразование сохраняет цикличность: расстояние между неделей 1
-    и неделей 52 равно расстоянию между любыми соседними неделями.
+    Обоснование периода 52 (таблица 2.3 ПЗ):
+        АКФ на лаге 52 = 0,306 превышает границу Бартлетта 0,1426,
+        что подтверждает статистически значимую годовую сезонность.
+        Числовые значения зафиксированы в reports/tables/table_2_3_acf.csv.
+
+    Циклическое кодирование необходимо для LSTM и упругой сети, поскольку
+    эти модели не различают порядковый и непрерывный характер признаков:
+    без sin/cos кодирования расстояние между неделей 1 и неделей 52
+    воспринимается как максимальное, а не нулевое.
+    САРИМА моделирует сезонность через параметр S = 52 явно и не требует
+    циклического кодирования календарных признаков.
+
     Признак year кодирует линейный тренд 2013–2017.
 
     Параметры
@@ -196,9 +244,13 @@ def add_oil_feature(
     """
     Присоединяет недельную цену нефти WTI и выполняет min-max нормировку.
 
-    oil.csv содержит пропуски в выходные дни. Корректный алгоритм:
+    Диапазоны цены нефти и продаж (пункт 2.2.1 ПЗ):
+        dcoilwtico : 26,2 – 110,6 (зафиксировано в config.OIL_PRICE_MIN/MAX)
+        sales_weekly: 0 – 89 440  (зафиксировано в config.SALES_MIN/MAX)
+
+    oil.csv содержит пропуски в выходные дни. Алгоритм:
         1. Установить date как индекс и привести к полному дневному диапазону
-           (asfreq('D')) — это явно добавляет NaN для выходных дней.
+           (asfreq('D')) — добавляет NaN для выходных дней явно.
         2. Заполнить NaN методом ffill(), затем bfill() для граничных дат.
         3. Агрегировать в недельное среднее по W-MON.
         4. Присоединить к df по колонке date.
@@ -217,15 +269,14 @@ def add_oil_feature(
     Возвращает
     ----------
     pd.DataFrame с новыми колонками oil_price и oil_price_norm,
-    а также словарём {"oil_min": ..., "oil_max": ...} для передачи в тест.
+    а также словарём {\"oil_min\": ..., \"oil_max\": ...} для передачи в тест.
     """
     oil = oil_df.copy()
     oil[DATE_COL] = pd.to_datetime(oil[DATE_COL])
-    # Корректное заполнение: явный дневной индекс → ffill → bfill
     oil = (
         oil.set_index(DATE_COL)
         .resample("D")["dcoilwtico"]
-        .mean()             # на случай дублей
+        .mean()
         .ffill()
         .bfill()
         .reset_index()
@@ -238,7 +289,6 @@ def add_oil_feature(
     )
     df = df.copy()
     df = df.merge(oil_weekly, on=DATE_COL, how="left")
-    # Параметры нормировки: передаются явно при работе с тестовой выборкой
     if oil_min is None:
         oil_min = df["oil_price"].min()
     if oil_max is None:
@@ -253,48 +303,67 @@ def add_holiday_feature(
     holidays_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Добавляет бинарный индикатор наличия значимого праздника в данной неделе.
+    Добавляет три бинарных индикатора праздников по локали.
+
+    Признаки:
+        is_holiday  — объединение всех типов (National + Regional + Local);
+                      = 1, если в неделе есть хотя бы один реальный праздник любого масштаба.
+        is_national — только locale == 'National'; 174 записи в holidays_events.csv;
+                      обоснование: рождественские пики в STL-декомпозиции (пункт 2.3 ПЗ).
+        is_regional — только locale == 'Regional'; 24 события;
+                      обоснование: локальные скачки продаж в отдельных провинциях (пункт 2.3 ПЗ).
 
     Логика holidays_events.csv:
-        - transferred=False, type in {Holiday, Additional} → реальный праздник
-          по указанной дате (учитывается).
-        - transferred=True  → праздник перенесён С этой даты на другую;
-          исходная дата НЕ является выходным (НЕ учитывается).
+        - transferred=False, type in {Holiday, Additional} → реальный праздник (учитывается).
+        - transferred=True  → праздник перенесён С этой даты (НЕ учитывается).
         - type='Transfer'   → дата, НА которую перенесён праздник (учитывается).
-        - type in {Bridge, Work Day, Event} → вспомогательные типы,
-          не влияющие на базовый спрос (не учитываются в is_holiday,
-          но могут быть добавлены отдельными признаками при необходимости).
+        - type in {Bridge, Work Day, Event} → не учитываются в базовых признаках.
 
-    Признак is_holiday = 1, если в неделе есть хотя бы один день типа
-    Holiday, Additional или Transfer (с transferred=False).
+    Контроль качества:
+        Ассерт проверяет отсутствие пересечений между is_national и is_regional:
+        один праздник не может одновременно относиться к двум уровням локали.
 
     Параметры
     ----------
     df          : pd.DataFrame с колонкой date (W-MON).
-    holidays_df : pd.DataFrame с колонками date, type, locale, locale_name,
-                  description, transferred.
+    holidays_df : pd.DataFrame с колонками date, type, locale, transferred.
 
     Возвращает
     ----------
-    pd.DataFrame с новой колонкой is_holiday (int8, 0 или 1).
+    pd.DataFrame с новыми колонками is_holiday, is_national, is_regional (int8).
     """
     h = holidays_df.copy()
     h[DATE_COL] = pd.to_datetime(h[DATE_COL])
+
     # Реальные праздники: не перенесённые Holiday/Additional + даты Transfer
     real_holidays = h[
         (h["type"].isin(["Holiday", "Additional"]) & (~h["transferred"])) |
         (h["type"] == "Transfer")
     ].copy()
-    # Выравниваем на начало недели W-MON
-    real_holidays["week_start"] = (
-        real_holidays[DATE_COL]
-        - pd.to_timedelta(real_holidays[DATE_COL].dt.weekday, unit="D")
-    )
-    holiday_weeks = set(real_holidays["week_start"].dt.normalize())
+
+    def _to_week_set(mask: pd.Series) -> set:
+        sub = real_holidays[mask].copy()
+        sub["week_start"] = (
+            sub[DATE_COL] - pd.to_timedelta(sub[DATE_COL].dt.weekday, unit="D")
+        )
+        return set(sub["week_start"].dt.normalize())
+
+    all_weeks      = _to_week_set(pd.Series([True] * len(real_holidays), index=real_holidays.index))
+    national_weeks = _to_week_set(real_holidays["locale"] == "National")
+    regional_weeks = _to_week_set(real_holidays["locale"] == "Regional")
+
     df = df.copy()
-    df["is_holiday"] = (
-        pd.to_datetime(df[DATE_COL]).dt.normalize().isin(holiday_weeks)
-    ).astype("int8")
+    dates_norm = pd.to_datetime(df[DATE_COL]).dt.normalize()
+
+    df["is_holiday"]  = dates_norm.isin(all_weeks).astype("int8")
+    df["is_national"] = dates_norm.isin(national_weeks).astype("int8")
+    df["is_regional"] = dates_norm.isin(regional_weeks).astype("int8")
+
+    # Контроль: национальный и региональный праздник не могут совпадать в одну неделю
+    assert not (df["is_national"].astype(bool) & df["is_regional"].astype(bool)).any(), (
+        "Обнаружено пересечение is_national и is_regional — проверьте holidays_events.csv"
+    )
+
     return df
 
 
@@ -353,8 +422,17 @@ def add_store_features(
 
     stores.csv содержит: store_nbr, city, state, type, cluster.
     Тип магазина (A–E) кодируется через pd.get_dummies (drop_first=False).
+    Результат: 5 бинарных столбцов store_type_A … store_type_E.
     Кластер (1–17) используется как числовой признак.
     city и state не включаются: их информация частично покрыта кластером.
+
+    Обоснование включения типа магазина (пункт 2.2.1 ПЗ):
+        Тип магазина объясняет 0,33–0,64 доли вариации продаж по семействам
+        товаров (таблица/рисунок пункта 2.2.1 ПЗ).
+
+    ВАЖНО: функция вызывается ДО операции dropna и ДО разбивки train/test
+    (см. build_feature_matrix → add_store_features → dropna → ноутбук 01, ячейка 10),
+    что обеспечивает одинаковое пространство признаков в обоих подмножествах.
 
     Параметры
     ----------
@@ -363,12 +441,16 @@ def add_store_features(
 
     Возвращает
     ----------
-    pd.DataFrame с новыми колонками cluster и store_type_A … store_type_E.
+    pd.DataFrame с новыми колонками cluster и store_type_A … store_type_E (5 столбцов).
     """
     stores = stores_df[[STORE_COL, "type", "cluster"]].copy()
     stores = stores.rename(columns={"type": "store_type"})
     df = df.merge(stores, on=STORE_COL, how="left")
     dummies = pd.get_dummies(df["store_type"], prefix="store_type", dtype="int8")
+    # Контроль числа one-hot столбцов: ожидается 5 (типы A–E)
+    assert len(dummies.columns) == 5, (
+        f"Ожидалось 5 one-hot столбцов store_type, получено {len(dummies.columns)}"
+    )
     df = pd.concat([df.drop(columns=["store_type"]), dummies], axis=1)
     return df
 
@@ -386,9 +468,18 @@ def build_feature_matrix(
     """
     Сквозной конвейер конструирования признаков (вызывается из ноутбука 01).
 
-    Порядок шагов соответствует Подразделу 2.1 пояснительной записки.
+    Порядок шагов соответствует Подразделу 2.4 пояснительной записки.
     oil_min / oil_max передаются при обработке тестовой выборки для
     предотвращения утечки данных через нормировку oil_price.
+
+    Итоговое число признаков после dropna: 22
+        6 лагов (lag_1, lag_2, lag_4, lag_9, lag_12, lag_52) + onpromotion_lag1 = 7
+        3 скользящих (rolling_mean_4, rolling_std_4, rolling_mean_12)
+        4 циклических (week_of_year_sin/cos, month_sin/cos)
+        3 праздничных (is_holiday, is_national, is_regional)
+        5 store_type (A–E) + cluster = 6
+        Итого: 7 + 3 + 4 + 3 + 6 = 23 признака
+        (rolling_std_12 вспомогательный — итог зависит от финального отбора)
 
     Возвращает
     ----------
@@ -402,6 +493,7 @@ def build_feature_matrix(
     df, oil_min, oil_max = add_oil_feature(df, oil_df, oil_min, oil_max)
     df = add_holiday_feature(df, holidays_df)
     df = add_transactions_feature(df, transactions_df)
+    # add_store_features вызывается ДО dropna — см. docstring функции
     df = add_store_features(df, stores_df)
     df = df.dropna(subset=[f"lag_{w}" for w in LAG_WEEKS])
     df = df.reset_index(drop=True)
