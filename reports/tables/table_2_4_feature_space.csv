@@ -1,24 +1,24 @@
-признак,тип,источник,обоснование из анализа
-lag_1,лаг,train.csv / sales_weekly,значимый лаг 1 АКФ diff1 (рисунок 2.10 ПЗ)
-lag_2,лаг,train.csv / sales_weekly,значимый лаг 2 АКФ diff1 (рисунок 2.10 ПЗ)
-lag_4,лаг,train.csv / sales_weekly,значимый лаг 4 АКФ diff1 (рисунок 2.10 ПЗ)
-lag_9,лаг,train.csv / sales_weekly,единственный значимый лаг ЧАКФ diff1 = 0,32 (рисунок 2.11 ПЗ)
-lag_12,лаг,train.csv / sales_weekly,значимые лаги 12-13 АКФ diff1 (рисунок 2.10 ПЗ)
-lag_52,лаг,train.csv / sales_weekly,АКФ = 0,306 > граница Бартлетта 0,1426 (таблица 2.3 ПЗ)
-onpromotion_lag1,лаг,train.csv / onpromotion_weekly,корреляция Пирсона 0,797 (пункт 2.2.1 ПЗ)
-rolling_mean_4,скользящая,train.csv / sales_weekly,локальный тренд за 4 недели (FIX-2: min_periods=2 для std)
-rolling_std_4,скользящая,train.csv / sales_weekly,волатильность спроса за 4 недели (min_periods=2 NB01)
-rolling_mean_12,скользящая,train.csv / sales_weekly,квартальный сезонный уровень
-week_of_year_sin,циклический,date,sin(2π·week/52); период S=52 по АКФ=0,306 > 0,1426 (таблица 2.3 ПЗ)
-week_of_year_cos,циклический,date,cos(2π·week/52); аналогично week_of_year_sin
-month_sin,циклический,date,sin(2π·month/12); месячная цикличность
-month_cos,циклический,date,cos(2π·month/12); месячная цикличность
-is_holiday,бинарный,holidays_events.csv,объединение National+Regional+Local (пункт 2.4.4 ПЗ)
-is_national,бинарный,holidays_events.csv,locale==National; 174 записи; рождественские пики STL (пункт 2.3 ПЗ)
-is_regional,бинарный,holidays_events.csv,locale==Regional; 24 события; локальные скачки продаж (пункт 2.3 ПЗ)
-store_type_A,категориальный,stores.csv,one-hot type==A; тип магазина объясняет 0,33-0,64 вариации (пункт 2.2.1 ПЗ)
-store_type_B,категориальный,stores.csv,one-hot type==B; аналогично store_type_A
-store_type_C,категориальный,stores.csv,one-hot type==C; аналогично store_type_A
-store_type_D,категориальный,stores.csv,one-hot type==D; аналогично store_type_A
-store_type_E,категориальный,stores.csv,one-hot type==E; аналогично store_type_A
-cluster,числовой,stores.csv,кластер магазина (1-17); покрывает географическую информацию
+признак,тип,источник,экономический смысл
+lag_1,лаг,train.csv / sales,"Лаг 1 нед.: АКФ diff1, рис. 2.10 ПЗ"
+lag_2,лаг,train.csv / sales,"Лаг 2 нед.: АКФ diff1, рис. 2.10 ПЗ"
+lag_4,лаг,train.csv / sales,"Лаг 4 нед.: АКФ diff1, рис. 2.10 ПЗ"
+lag_9,лаг,train.csv / sales,"Лаг 9 нед.: ЧАКФ diff1=0,32, рис. 2.11 ПЗ"
+lag_12,лаг,train.csv / sales,"Лаг 12 нед.: АКФ diff1 лаги 12–13, рис. 2.10 ПЗ"
+lag_52,лаг,train.csv / sales,"Лаг 52 нед.: АКФ=0,306 > 0,1426 (табл. 2.3 ПЗ)"
+onpromotion_lag1,лаг,train.csv / onpromotion,"Промо t-1: r=0,797 Пирсона, п. 2.2.1 ПЗ"
+rolling_mean_4,скользящая,train.csv / sales,Локальный тренд 4 нед.
+rolling_std_4,скользящая,train.csv / sales,"Волатильность 4 нед. (шоки, п. 2.2.3 ПЗ)"
+rolling_mean_12,скользящая,train.csv / sales,Квартальный уровень 12 нед.
+week_of_year_sin,циклический,date,"sin(2π·week/52); S=52 по АКФ=0,306, табл. 2.3 ПЗ"
+week_of_year_cos,циклический,date,cos(2π·week/52); непрерывность перехода 52→1
+month_sin,циклический,date,sin(2π·month/12); месячная сезонность
+month_cos,циклический,date,cos(2π·month/12); непрерывность перехода 12→1
+is_holiday,бинарный,holidays_events.csv,Объединение всех типов праздников
+is_national,бинарный,holidays_events.csv,"Национальный: 174 записи, пики STL (п. 2.3 ПЗ)"
+is_regional,бинарный,holidays_events.csv,"Региональный: 24 события, локальные скачки"
+store_type_A,one-hot,stores.csv / type,"Тип A: 0,33–0,64 доли вариации (п. 2.2.1 ПЗ)"
+store_type_B,one-hot,stores.csv / type,Тип B: аналогично store_type_A
+store_type_C,one-hot,stores.csv / type,Тип C: аналогично store_type_A
+store_type_D,one-hot,stores.csv / type,Тип D: аналогично store_type_A
+store_type_E,one-hot,stores.csv / type,Тип E: аналогично store_type_A
+cluster,числовой,stores.csv / cluster,Кластер 1–17; географическая однородность
