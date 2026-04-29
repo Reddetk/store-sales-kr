@@ -3,3 +3,5 @@ data/raw/*.csv
 data/processed/*.parquet
 data/interim/*.parquet
 data/**/*.parquet
+
+*.pkl
