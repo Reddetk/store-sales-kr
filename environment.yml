@@ -1,0 +1,17 @@
+name: store-sales
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - xgboost>=2.0
+    - scikit-learn>=1.4
+    - tensorflow>=2.15
+    - statsmodels>=0.14
+    - shap>=0.44
+    - pandas>=2.1
+    - numpy>=1.26
+    - matplotlib>=3.8
+    - seaborn>=0.13
