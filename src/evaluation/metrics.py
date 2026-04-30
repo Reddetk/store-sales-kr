@@ -1,7 +1,16 @@
 """
 metrics.py — метрики качества прогнозирования (Подраздел 3.3 ПЗ).
 
-RMSE, MAE, MAPE вычисляются на исходной шкале (expm1 от log1p-таргета).
+RMSE, MAE вычисляются на исходной шкале (expm1 от log1p-таргета).
+MAPE вычисляется тремя способами для корректной интерпретации разреженных данных:
+  - mape(eps=1)  : стандартный MAPE, исключает y_true <= 1.
+  - smape        : симметричный MAPE (sMAPE), не взрывается при y_true → 0.
+  - mape_nonzero : MAPE только на строках y_true >= threshold (default=10).
+
+Вследствие структурной разреженности датасета Corporación Favorita (~40–55 %
+строк с продажами < 10 ед./нед.) классический MAPE систематически завышается
+до 68–168 %. Следовательно, в ПЗ основной метрикой используется RMSE,
+а sMAPE — как дополнительная интерпретируемая мера (п. 3.3 ПЗ).
 """
 from __future__ import annotations
 
@@ -23,9 +32,9 @@ def mape(y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1.0) -> float:
     """
     Средняя абсолютная процентная ошибка (Mean Absolute Percentage Error), %.
 
-    Нулевые и близкие к нулю значения y_true добавляют eps для стабильности.
-    eps=1.0 соответствует порогу: строки, где y_true < eps, исключаются
-    из расчёта MAPE, поскольку деление на ~0 даёт неинформативный выброс.
+    Строки с y_true <= eps исключаются из расчёта вследствие деления на ~0.
+    eps=1.0 соответствует минимальному уровню продаж, при котором MAPE
+    информативен. Для разреженных данных предпочтительнее smape или mape_nonzero.
 
     Параметры
     ----------
@@ -39,13 +48,57 @@ def mape(y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1.0) -> float:
     return float(100.0 * np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])))
 
 
+def smape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """
+    Симметричный MAPE (Symmetric Mean Absolute Percentage Error), %.
+
+    sMAPE = mean(200 * |y - yhat| / (|y| + |yhat| + eps)) в диапазоне [0, 200 %].
+    Определён при y_true = 0 вследствие симметричного знаменателя.
+    Используется вместо MAPE для разреженных рядов (Corporación Favorita,
+    M5 Competition), где классический MAPE завышается до 68–168 %.
+
+    Параметры
+    ----------
+    y_true : истинные значения на исходной шкале (не log1p).
+    y_pred : прогнозные значения на исходной шкале (не log1p).
+    """
+    denominator = np.abs(y_true) + np.abs(y_pred) + 1e-8
+    return float(100.0 * np.mean(2.0 * np.abs(y_true - y_pred) / denominator))
+
+
+def mape_nonzero(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    threshold: float = 10.0,
+) -> float:
+    """
+    MAPE только на строках с y_true >= threshold.
+
+    Позволяет оценить качество прогноза на высокообъёмных семействах
+    (BEVERAGES, PRODUCE) отдельно от структурно разреженных (BOOKS, HARDWARE).
+    threshold=10 соответствует нижней границе «значимых» продаж по п. 2.2 ПЗ.
+
+    Параметры
+    ----------
+    y_true    : истинные значения на исходной шкале.
+    y_pred    : прогнозные значения на исходной шкале.
+    threshold : минимальный порог y_true.
+    """
+    mask = y_true >= threshold
+    if mask.sum() == 0:
+        return float("nan")
+    return float(100.0 * np.mean(
+        np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])
+    ))
+
+
 def compute_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
     log_scale: bool = True,
 ) -> dict[str, float]:
     """
-    Вычисляет RMSE, MAE, MAPE для пары (y_true, y_pred).
+    Вычисляет RMSE, MAE, MAPE, sMAPE, MAPE_nz для пары (y_true, y_pred).
 
     Параметры
     ----------
@@ -55,18 +108,20 @@ def compute_metrics(
 
     Возвращает
     ----------
-    Словарь {'RMSE': ..., 'MAE': ..., 'MAPE': ...}.
+    Словарь {'RMSE': ..., 'MAE': ..., 'MAPE': ..., 'sMAPE': ..., 'MAPE_nz': ...}.
     """
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
     if log_scale:
         y_true = np.expm1(y_true)
-        y_pred = np.expm1(np.clip(y_pred, -1e6, 20))  # clip to prevent overflow
-    y_pred = np.clip(y_pred, 0, None)  # продажи неотрицательны
+        y_pred = np.expm1(np.clip(y_pred, -1e6, 20))
+    y_pred = np.clip(y_pred, 0, None)
     return {
-        "RMSE": rmse(y_true, y_pred),
-        "MAE":  mae(y_true, y_pred),
-        "MAPE": mape(y_true, y_pred),
+        "RMSE":    rmse(y_true, y_pred),
+        "MAE":     mae(y_true, y_pred),
+        "MAPE":    mape(y_true, y_pred),
+        "sMAPE":   smape(y_true, y_pred),
+        "MAPE_nz": mape_nonzero(y_true, y_pred, threshold=10.0),
     }
 
 
@@ -78,11 +133,11 @@ def metrics_table(
 
     Параметры
     ----------
-    results : {model_name: {horizon: {'RMSE': ..., 'MAE': ..., 'MAPE': ...}}}.
+    results : {model_name: {horizon: {'RMSE': ..., 'MAE': ..., ...}}}.
 
     Возвращает
     ----------
-    pd.DataFrame с MultiIndex columns (горизонт, метрика).
+    pd.DataFrame с колонками вида h=1_RMSE, h=1_MAE, h=1_MAPE, h=1_sMAPE, h=1_MAPE_nz, ...
     """
     rows = []
     for model, horizons in results.items():
