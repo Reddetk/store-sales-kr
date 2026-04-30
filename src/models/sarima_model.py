@@ -61,8 +61,8 @@ def fit_sarima(
             series,
             order=order,
             seasonal_order=seasonal_order,
-            enforce_stationarity=False,
-            enforce_invertibility=False,
+            enforce_stationarity=True,
+            enforce_invertibility=True,
         )
         result = model.fit(disp=disp)
     return result
