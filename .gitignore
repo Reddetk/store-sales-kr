@@ -6,3 +6,4 @@ data/**/*.parquet
 
 *.pkl
 *.pyc
+*.pt
