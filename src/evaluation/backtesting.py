@@ -27,17 +27,20 @@ from src.config import TARGET, DATE_COL, STORE_COL, FAMILY_COL, FORECAST_HORIZON
 def make_horizon_target(
     df: pd.DataFrame,
     horizon: int,
+    target_col: str = TARGET,
 ) -> pd.DataFrame:
     """
     Конструирует целевую переменную для горизонта h (direct forecasting).
 
-    target_h[t] = log1p(sales_weekly[t + h]), сдвиг по группам (store, family).
+    target_h[t] = log1p(target_col[t + h]), сдвиг по группам (store, family).
     Строки, в которых target_h равен NaN (конец каждой группы), удаляются.
 
     Параметры
     ----------
-    df      : pd.DataFrame с колонками sales_weekly, store_nbr, family, date.
-    horizon : горизонт прогноза в неделях.
+    df         : pd.DataFrame с колонками sales_weekly, store_nbr, family, date.
+    horizon    : горизонт прогноза в неделях.
+    target_col : базовая колонка для сдвига (по умолчанию TARGET из config).
+                 Позволяет явно передавать имя колонки без изменения конфига.
 
     Возвращает
     ----------
@@ -47,7 +50,7 @@ def make_horizon_target(
     col = f"target_h{horizon}"
     # log1p-преобразование целевой переменной: снижает гетероскедастичность
     df[col] = (
-        df.groupby([STORE_COL, FAMILY_COL])[TARGET]
+        df.groupby([STORE_COL, FAMILY_COL])[target_col]
         .transform(lambda x: np.log1p(x.shift(-horizon)))
     )
     return df.dropna(subset=[col]).reset_index(drop=True)
