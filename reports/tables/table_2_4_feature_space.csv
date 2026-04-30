@@ -22,3 +22,5 @@ store_type_C,one-hot,stores.csv / type,Тип C: аналогично store_type
 store_type_D,one-hot,stores.csv / type,Тип D: аналогично store_type_A
 store_type_E,one-hot,stores.csv / type,Тип E: аналогично store_type_A
 cluster,числовой,stores.csv / cluster,Кластер 1–17; географическая однородность
+family_log_median,числовой,train.csv / sales,"log1p(медиана нед. продаж семейства); масштаб ряда, FIX-VOLUME"
+family_volume_tier,бинарный,train.csv / family,1 — BEVERAGES/PRODUCE; 0 — прочие; причина MAPE=68–168 %
