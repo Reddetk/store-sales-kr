@@ -58,16 +58,34 @@ def make_horizon_target(
 
 def get_feature_cols(df: pd.DataFrame) -> list[str]:
     """
-    Возвращает список признаковых столбцов (исключает служебные и целевые).
+    Возвращает список признаковых столбцов (25 шт., Таблица 2.4 ПЗ).
+
+    Семейства товаров представлены двумя объёмными признаками:
+        family_log_median  — log1p(медиана недельных продаж по семейству)
+        family_volume_tier — 1 для BEVERAGES/PRODUCE, 0 для остальных
+
+    Поскольку parquet содержит 33 legacy one-hot столбца family_*,
+    они исключаются явно: их информация поглощена family_log_median
+    и family_volume_tier. Следовательно, FEATURE_COLS = 25 признаков.
     """
+    _VOLUME_FEATURES = {"family_log_median", "family_volume_tier"}
     exclude = {
         DATE_COL, STORE_COL, FAMILY_COL, TARGET,
         "onpromotion_weekly", "oil_price",
         "transactions_weekly",
+        "rolling_std_12",   # вспомогательный, не входит в реестр 25
+        "year",             # поглощается sin/cos цикличными признаками
     }
-    # Исключаем все target_h* столбцы
+    # Исключаем target_h*
     target_cols = {c for c in df.columns if c.startswith("target_h")}
     exclude |= target_cols
+    # Исключаем legacy family one-hot (family_AUTOMOTIVE и т.д.)
+    # — оставляем только family_log_median и family_volume_tier
+    family_onehot = {
+        c for c in df.columns
+        if c.startswith("family_") and c not in _VOLUME_FEATURES
+    }
+    exclude |= family_onehot
     return [c for c in df.columns if c not in exclude]
 
 
